@@ -19,6 +19,7 @@ from liger_kernel.transformers.model.gemma2 import lce_forward as gemma2_lce_for
 from liger_kernel.transformers.model.gemma2 import lce_forward_deprecated as gemma2_lce_forward_deprected
 from liger_kernel.transformers.model.llama import lce_forward as llama_lce_forward
 from liger_kernel.transformers.model.llama import lce_forward_deprecated as llama_lce_forward_deprecated
+from liger_kernel.transformers.model.llama4 import lce_forward as llama4_lce_forward
 from liger_kernel.transformers.model.llava import lce_forward as llava_lce_forward
 from liger_kernel.transformers.model.llava import lce_forward_deprecated as llava_lce_forward_deprecated
 from liger_kernel.transformers.model.mistral import lce_forward as mistral_lce_forward
@@ -222,6 +223,82 @@ def apply_liger_kernel_to_llama(
         for decoder_layer in base_model.layers:
             if swiglu:
                 _patch_swiglu_module(decoder_layer.mlp, LigerSwiGLUMLP)
+            if rms_norm:
+                _patch_rms_norm_module(decoder_layer.input_layernorm)
+                _patch_rms_norm_module(decoder_layer.post_attention_layernorm)
+
+
+def apply_liger_kernel_to_llama4(
+    rope: bool = True,
+    cross_entropy: bool = False,
+    fused_linear_cross_entropy: bool = True,
+    rms_norm: bool = True,
+    swiglu: bool = True,
+    model: PreTrainedModel = None,
+) -> None:
+    """
+    Apply Liger kernels to replace original implementations in HuggingFace Llama-4 models.
+
+    Args:
+        rope (bool): Whether to apply Liger's rotary position embedding. Default is True.
+        cross_entropy (bool): Whether to apply Liger's cross entropy loss. Default is False.
+        fused_linear_cross_entropy (bool):
+            Whether to apply Liger's fused linear cross entropy loss. Default is True.
+            `cross_entropy` and `fused_linear_cross_entropy` cannot both be True.
+            If `fused_linear_cross_entropy` is True, the logits will not be materialized but more memory efficient.
+        rms_norm (bool): Whether to apply Liger's RMSNorm. Default is True.
+        swiglu (bool): Whether to apply Liger's SwiGLU MLP. Default is True.
+        model (PreTrainedModel): The loaded model to patch. Default is None.
+    """
+
+    # Import the Llama-4 model components from Hugging Face Transformers.
+    from transformers.models.llama4 import modeling_llama4
+    from transformers.models.llama4.modeling_llama4 import Llama4ForConditionalGeneration, Llama4TextModel
+
+    # === Kernel patch for static components ===
+    if rope:
+        # Patch the rotary embedding function; note that Llama-4 uses `apply_rotary_emb` as its core function.
+        modeling_llama4.apply_rotary_emb = liger_rotary_pos_emb
+
+    if rms_norm:
+        # Patch the layer normalization used in the text tower.
+        modeling_llama4.Llama4TextRMSNorm = LigerRMSNorm
+
+    if swiglu:
+        # Patch the feed-forward module (dense MLP) used by the text decoder layers.
+        modeling_llama4.Llama4TextMLP = LigerSwiGLUMLP
+
+    if cross_entropy:
+        # For cross entropy, either override the function or the loss class depending on the transformers version.
+        if transformer_version >= version.parse(SUPPORTED_TRANSFORMER_VERSION):
+            from transformers.loss.loss_utils import nn
+            nn.functional.cross_entropy = liger_cross_entropy
+        else:
+            logger.warning(TRANSFORMER_DEPRECATION_WARNING)
+            # Note: Depending on your integration, you might need to patch a CrossEntropyLoss class if defined.
+            modeling_llama4.CrossEntropyLoss = LigerCrossEntropyLoss
+
+    if fused_linear_cross_entropy:
+        # Patch the forward method of the conditional generation model to use Liger's fused linear cross entropy.
+        if transformer_version >= version.parse(SUPPORTED_TRANSFORMER_VERSION):
+            modeling_llama4.Llama4ForConditionalGeneration.forward = llama4_lce_forward
+        else:
+            logger.warning(TRANSFORMER_DEPRECATION_WARNING)
+            modeling_llama4.Llama4ForConditionalGeneration.forward = llama4_lce_forward
+
+    # === Instance-level patching if a model instance is provided ===
+    if model is not None:
+        # Get the base text model from the model instance (using the base_model_prefix attribute).
+        base_model: Llama4TextModel = getattr(model, model.base_model_prefix, model)
+
+        if rms_norm:
+            _patch_rms_norm_module(base_model.norm)
+
+        # Patch each decoder layer within the text model.
+        for decoder_layer in base_model.layers:
+            if swiglu:
+                # The feed-forward module for Llama-4 may be either a plain MLP or MoE.
+                _patch_swiglu_module(decoder_layer.feed_forward, LigerSwiGLUMLP)
             if rms_norm:
                 _patch_rms_norm_module(decoder_layer.input_layernorm)
                 _patch_rms_norm_module(decoder_layer.post_attention_layernorm)
@@ -1326,6 +1403,7 @@ MODEL_TYPE_TO_APPLY_LIGER_FN = {
     "gemma3_text": apply_liger_kernel_to_gemma3_text,
     "gemma3": apply_liger_kernel_to_gemma3,
     "llama": apply_liger_kernel_to_llama,
+    "llama4": apply_liger_kernel_to_llama4,
     "llava": apply_liger_kernel_to_llava,
     "granite": apply_liger_kernel_to_granite,
     "mllama": apply_liger_kernel_to_mllama,
