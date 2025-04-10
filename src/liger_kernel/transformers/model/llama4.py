@@ -89,7 +89,7 @@ def lce_forward(
     # Call the underlying forward function of Llama4ForConditionalGeneration
     # Note: The underlying model is assumed to be available as `self.model` (or similar) and
     # returns an output structure that includes logits, past_key_values, etc.
-    output = self.model(
+    output = self.language_model(
         attention_mask=attention_mask,
         position_ids=position_ids,
         past_key_values=past_key_values,
