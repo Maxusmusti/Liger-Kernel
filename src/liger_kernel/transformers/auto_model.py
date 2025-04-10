@@ -1,7 +1,7 @@
 import inspect
 
 from transformers import AutoConfig
-from transformers import AutoModelForCausalLM
+from transformers import AutoModel
 
 from liger_kernel.transformers.monkey_patch import MODEL_TYPE_TO_APPLY_LIGER_FN
 from liger_kernel.transformers.monkey_patch import _apply_liger_kernel
@@ -12,7 +12,7 @@ def _get_model_config(model_dir, **model_init_kwargs):
     return config
 
 
-class AutoLigerKernelForCausalLM(AutoModelForCausalLM):
+class AutoLigerKernelForCausalLM(AutoModel):
     """
     This class is a drop-in replacement for AutoModelForCausalLM that applies the Liger Kernel to the model
     if applicable.

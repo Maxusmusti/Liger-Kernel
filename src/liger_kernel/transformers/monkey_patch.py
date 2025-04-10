@@ -229,7 +229,7 @@ def apply_liger_kernel_to_llama(
 
 
 def apply_liger_kernel_to_llama4(
-    rope: bool = True,
+    rope: bool = False,
     cross_entropy: bool = False,
     fused_linear_cross_entropy: bool = True,
     rms_norm: bool = True,
